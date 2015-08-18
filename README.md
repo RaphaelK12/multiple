@@ -16,4 +16,4 @@ lowBoundZero(__m128i *reg)
 
 process_vector(uint8_t *src,uint8_t *dst,int width,int height, int16_t * koeffs_table)
   is main function for using every upper functions. Arguments are pointer to source, pointer to destination, intetgers, meaning width and height
-  and , of course, main argument is pointer to 3*3 table of koeffs.
+  and , of course, main argument is pointer to 3 * 3 table of koeffs.
