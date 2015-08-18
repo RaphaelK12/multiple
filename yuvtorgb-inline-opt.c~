@@ -301,6 +301,6 @@ void fileProcess(int wid, int hei, char * name){
 int main()
 {
 	test();
-	//fileProcess(176,144,"out.yuv");
+	fileProcess(176,144,"out.yuv");
 	return 0;
 }
