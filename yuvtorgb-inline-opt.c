@@ -21,10 +21,40 @@
 //R = (RKY * (Y-16) + RKU * (U-128) + RKV * (V-128)) >> 10;
 
 int16_t transf_koeff[] = {RKY, RKU, RKV,  GKY, GKU, GKV,  BKY, BKU, BKV};
+int16_t* koeff_v;
+
+static void convert_YUYV_to_RGB32_c(const uint8_t *src, uint8_t *dst, int width, int height);
+
+int16_t* set_koeffs(const int16_t * k){
+    int16_t* mat = malloc( 3 * 2 * 8 * sizeof(int16_t));
     
-
-
-static inline void unpack_YUYV(uint8_t * mem, __m128i* y, __m128i* u ,__m128i* v){
+    // INVERSE ORDER!!!
+    // a and b
+    for(int i = 0; i < 3; ++i){
+        mat[2*i*8 + 7] = k[i*3 + 0];
+        mat[2*i*8 + 6] = k[i*3 + 1];
+        mat[2*i*8 + 5] = k[i*3 + 0];
+        mat[2*i*8 + 4] = k[i*3 + 1];
+        mat[2*i*8 + 3] = k[i*3 + 0];
+        mat[2*i*8 + 2] = k[i*3 + 1];
+        mat[2*i*8 + 1] = k[i*3 + 0];
+        mat[2*i*8 + 0] = k[i*3 + 1];
+    }
+    
+    //c 
+    for(int i = 0; i < 3; ++i){
+        mat[(2*i+1)*8  + 7] = 0;
+        mat[(2*i+1)*8  + 6] = k[i*3 + 2];
+        mat[(2*i+1)*8  + 5] = 0;
+        mat[(2*i+1)*8  + 4] = k[i*3 + 2];
+        mat[(2*i+1)*8  + 3] = 0;
+        mat[(2*i+1)*8  + 2] = k[i*3 + 2];
+        mat[(2*i+1)*8  + 1] = 0;
+        mat[(2*i+1)*8  + 0] = k[i*3 + 2];
+    }
+    return mat;
+}
+static inline void load_and_unpack_YUYV(const uint8_t * mem, __m128i* y, __m128i* u ,__m128i* v){
     __m128i vec=_mm_loadl_epi64((__m128i*)(mem));
     // vec = 0 0 0 0 0 0 0 0 v y u y v y u y
     *v = _mm_set1_epi16(255); // store of mask
@@ -53,103 +83,93 @@ static inline void unpack_YUYV(uint8_t * mem, __m128i* y, __m128i* u ,__m128i* v
     *u = _mm_unpacklo_epi16(*u,vec); //  [U] = 0 0 0 U 0 0 0 U 0 0 0 U 0 0 0 U
     *v = _mm_unpacklo_epi16(*v,vec); //  [V] = 0 0 0 V 0 0 0 V 0 0 0 V 0 0 0 V
 }
-static inline __m128i madd3(__m128i * chan_a,  __m128i *chan_b, __m128i *chan_c, int16_t koef_a, int16_t koef_b,int16_t koef_c){
-   //int16_t koef_a = *(koeffs);
-   //int16_t koef_b = *(koeffs + 1);
-   //int16_t koef_c = *(koeffs + 2);
-    __m128i mul_res =_mm_set_epi16(koef_a, koef_b, koef_a, koef_b, koef_a, koef_b, koef_a, koef_b);
+static inline __m128i multiple_add(const __m128i* chan_a , const __m128i* chan_b, const __m128i* chan_c, const int16_t* koeffs_ab, const int16_t* koeffs_c){
+    __m128i mul_res = _mm_loadu_si128((__m128i*) koeffs_ab);
     __m128i data = _mm_slli_epi32(*chan_a, 16);
     data = _mm_or_si128(data, *chan_b); // data = 0 a, 0 b, 0 a, 0 b, 0 a, 0 b, 0 a, 0 b
     mul_res = _mm_madd_epi16(mul_res, data); // mul = s 0 a*b , s 0 a*b, s 0 a*b, s 0 a*b    
     
-    __m128i mul_res_last = _mm_set1_epi16(koef_c); // epi16, not epi32 - problem of signed int
+    __m128i mul_res_last = _mm_loadu_si128((__m128i*) koeffs_c);; // epi16, not epi32 - problem of signed int
     mul_res_last =_mm_madd_epi16(mul_res_last, *chan_c);
     
     mul_res = _mm_add_epi32(mul_res, mul_res_last); // (ka * a + kb * b) + (kc * c)
     mul_res = _mm_srai_epi32(mul_res,10); // shifting
     return mul_res;
 }
-static inline void check_Up_Bound(__m128i *reg, uint32_t value){
-    __m128i up_val = _mm_set1_epi32(value);
-    __m128i mask = _mm_cmplt_epi32(*reg,up_val); // if (reg[i] >= value)
-    *reg = _mm_and_si128(*reg,mask); 
-    mask = _mm_andnot_si128(mask,up_val);  // reg[i] = value;
-    *reg = _mm_or_si128(*reg,mask);
+static inline void clip_32i(__m128i * data ,const int32_t max_val){
+    __m128i check_val = _mm_set1_epi32(max_val);
+    __m128i mask = _mm_cmplt_epi32(*data, check_val); // if (reg[i] >= value)
+    *data = _mm_and_si128(*data, mask); 
+    mask = _mm_andnot_si128(mask, check_val);  // reg[i] = value;
+    *data = _mm_or_si128(*data,mask);
+    
+    check_val = _mm_setzero_si128();
+    mask = _mm_cmpgt_epi32(*data, check_val); // if(reg[i] <= 0)
+    *data = _mm_and_si128(*data,mask); //  reg[i] = 0
 }
-static inline void lowBoundZero(__m128i *reg){
-    __m128i zero_val = _mm_setzero_si128();
-    __m128i mask = _mm_cmpgt_epi32(*reg,zero_val); // if(reg[i] <= 0)
-    *reg = _mm_and_si128(*reg,mask); //  reg[i] = 0
-}
-void process_vector(uint8_t *src,uint8_t *dst,int width,int height, int16_t * koeffs_table)
+static void convert_YUYV_to_RGB32_sse2(uint8_t* src ,uint8_t*  dst , int width , int height , const int16_t* koeffs_table)
 {
     __m128i y;
     __m128i u;
     __m128i v;
-    int16_t ka1 = *(koeffs_table);
-    int16_t kb1 = *(koeffs_table+1);
-    int16_t kc1 = *(koeffs_table+2);
-    
-    int16_t ka2 = *(koeffs_table+3);
-    int16_t kb2 = *(koeffs_table+4);
-    int16_t kc2 = *(koeffs_table+5);
-    
-    int16_t ka3 = *(koeffs_table+6);
-    int16_t kb3 = *(koeffs_table+7);
-    int16_t kc3 = *(koeffs_table+8);
-    for(int i=0;i < height;++i)
-        for(int j = 0; j < width; j+=4){
+    int j;
+    for(int i = 0; i < height; ++i)
+	{
+		for( j = 0; j + 3 < width; j += 4){
 
-            unpack_YUYV(src,&y,&u,&v);
+            load_and_unpack_YUYV(src + j * 2, &y, &u, &v);
 
             //ALFA
-            __m128i vec = _mm_set1_epi32(3);
+            __m128i vec = _mm_set1_epi32( 3 );
 
             //RED
     
-            __m128i buf = madd3(&y,&u,&v,ka1, kb1, kc1);
-            check_Up_Bound(&buf, 1023);
-            lowBoundZero(&buf);
-            buf = _mm_slli_epi32(buf,2);
+            __m128i buf = multiple_add(&y, &u, &v, koeffs_table, koeffs_table + 8);
+            clip_32i(&buf, 1023);
+            
+            buf = _mm_slli_epi32(buf, 2);
             //koeffs_table += 3;
-            vec=_mm_or_si128(vec,buf);
+            vec = _mm_or_si128(vec, buf);
 
             //G component
-            buf = madd3(&y,&u,&v,ka2, kb2, kc2);
-            check_Up_Bound(&buf, 1023);
-            lowBoundZero(&buf);
+            buf = multiple_add(&y, &u, &v, koeffs_table + 16, koeffs_table + 24);
+            clip_32i(&buf, 1023);
 
-            buf = _mm_slli_epi32(buf,12);
-            vec=_mm_or_si128(vec,buf);
+            buf = _mm_slli_epi32(buf, 12);
+            vec = _mm_or_si128(vec, buf);
 
             //B component
-            buf = madd3(&y,&u,&v,ka3, kb3, kc3);
-            check_Up_Bound(&buf, 1023);
-            lowBoundZero(&buf);
+            buf = multiple_add(&y, &u, &v, koeffs_table + 32, koeffs_table + 40);
+            clip_32i(&buf, 1023);
 
-            buf = _mm_slli_epi32(buf,22);
+            buf = _mm_slli_epi32(buf, 22);
+            vec = _mm_or_si128(vec, buf);
 
-            vec=_mm_or_si128(vec,buf);
+            _mm_storeu_si128( (__m128i*)(dst + j * 4), vec);
+            
+          }
+        int last = width - j ; 
+        if(last > 0)
+            convert_YUYV_to_RGB32_c(src + 2 * j, dst + 4 * j, last, 1);
 
-            _mm_storeu_si128((__m128i*)(dst),vec);
-            src += 8;
-            dst += 16;
+        src += 2 * width;
+        dst += 4 * width;
     }
+       
 }
-void process_usuall(uint8_t *src,uint8_t *dst,int width,int height)
+static void convert_YUYV_to_RGB32_c(const uint8_t *src, uint8_t *dst,  int width, int height)
 {
-	int Y,V,U;
+	int Y, V, U;
 	int R, G, B;
-
-	for(int i = 0; i < height; i++)
+    for(int i = 0; i < height; i++)
 	{
 		for(int j = 0; j < width; j++)
 			{
 					Y = src[2*j] - 16;
 					if(((j >> 1) << 1) == j )
 						{
-							U = src[2*j+1] - 128;
-							V = src[2*j+3] - 128;
+							U = src[2 * j + 1] - 128;
+							V = src[2 * j + 3] - 128;
 						}
 
 					B = (4768 * Y + 8809 * U + 11 * V) >> 10;
@@ -185,13 +205,13 @@ void process_usuall(uint8_t *src,uint8_t *dst,int width,int height)
 }
 
 bool check(uint8_t* a,uint8_t* b,int width,int height){
-	for(int y=0;y<height;++y)
-		for(int x=0;x<width;++x)
+	for(int y = 0; y < height; ++y)
+		for(int x = 0 ;x < width ; ++x)
 		{
-			//printf("a=%d  b= %d\n",a[y*width+x],b[y*width+x]);
-			if(a[y*width+x]!=b[y*width+x])
+			if(a[y*width+x]!= b[y*width+x])
 			{
-				printf("error pos is %d %d",y,x);
+				printf("a= %d  b= %d\n",a[y*width+x],b[y*width+x]);
+                printf("error pos is %d %d\n",y,x);
 				return false;
 			}
 		}
@@ -199,11 +219,11 @@ bool check(uint8_t* a,uint8_t* b,int width,int height){
 }
 void createframe(int wid,int hei,uint8_t* res)
 {
-	srand(time(NULL));
-	for(int y=0;y<hei;++y)
-		for(int x=0;x<wid;++x)
+	//srand(time(NULL));
+	for(int y = 0; y < hei; ++y)
+		for(int x = 0; x < wid; ++x)
 			{
-				res[y*wid+x]=rand()%256;
+				res[ y * wid + x]=rand()%256;
 			}
 }
 int test()
@@ -211,7 +231,7 @@ int test()
 	clock_t t1,t2;
 	int testnum=100;
 	uint64_t du,dv;
-	int wid=640,hei=480;
+	int wid=642,hei=481;
 	//uint8_t test[]={10,11,12,20,21,22,30,31,32,40,41,42,50,51,52,60};
 	//uint8_t test[]={200,200,230,240,250,260,270,280,290,100,110,120,130,140,150,160};
 	uint8_t test[]={100,200,130,40,50,60,70,80,90,100,110,120,130,140,150,160};
@@ -222,14 +242,14 @@ int test()
 	uint8_t *dst1=(uint8_t*)malloc(wid*hei*4);
 	uint8_t *dst2=(uint8_t*)malloc(wid*hei*4);
 	puts("Usuall");
-	process_usuall(test,(uint8_t*)restest,4,1);
+	convert_YUYV_to_RGB32_c(test,(uint8_t*)restest,4,1);
 	for(int i=0;i<4;++i)
 	{
 		printf("%4d ",restest[i]);
 	}
 	puts("Vector");
 	memset(restest,0,16);
-	process_vector(test,(uint8_t*)restest,4,1, transf_koeff);
+	convert_YUYV_to_RGB32_sse2(test,(uint8_t*)restest,4,1, koeff_v);
 
 	for(int i=0;i<4;++i)
 	{
@@ -241,8 +261,8 @@ int test()
 	for(int i=0;i<testnum;++i)
 	{
 		createframe(wid*2,hei,src);
-		process_usuall(src,dst1,wid,hei);
-		process_vector(src,dst2,wid,hei,transf_koeff);
+		convert_YUYV_to_RGB32_c(src,dst1,wid,hei);
+		convert_YUYV_to_RGB32_sse2(src , dst2 , wid,hei , koeff_v);
 		if(!check((uint8_t*)dst1,(uint8_t*)dst2,wid*4,hei))
 		{
 			 ++fail;
@@ -258,7 +278,7 @@ int test()
 		createframe(wid*2,hei,src);
 		t1=clock();
 		//printf("T1=%d\n",t1);
-		process_usuall(src,dst1,wid,hei);
+		convert_YUYV_to_RGB32_c(src,dst1,wid,hei);
 		t2=clock();
 		//printf("T2=%d\n",t2);
 		du+=t2-t1;
@@ -272,7 +292,7 @@ int test()
 		createframe(wid*2,hei,src);
 		t1=clock();
 		//printf("T1=%d\n",t1);
-			process_vector(src,dst2,wid,hei,transf_koeff);
+			convert_YUYV_to_RGB32_sse2(src,dst2,wid,hei,koeff_v);
 		t2=clock();
 		//printf("T2=%d\n",t2);
 		dv+=t2-t1;
@@ -292,7 +312,7 @@ void fileProcess(int wid, int hei, char * name){
 	uint8_t *dst=(uint8_t*)malloc(wid*hei*4);
 	fread(src,1,wid*hei*2,f1);
 	fclose(f1);
-	process_vector(src,dst,wid,hei, transf_koeff);
+	convert_YUYV_to_RGB32_sse2(src,dst,wid,hei, transf_koeff);
 	FILE* f2=fopen("out.rgb","wb");
 	fwrite(dst,1,wid*hei*4,f1);
 	fclose(f2);
@@ -300,7 +320,16 @@ void fileProcess(int wid, int hei, char * name){
 }
 int main()
 {
-	test();
+    srand(time(NULL));
+    koeff_v = set_koeffs(transf_koeff);
+    /*__m128i m1 = _mm_set_epi32(10, 20 , 30 , 40);
+    m1 = multiple_add(&m1, &m1, &m1, koeff_v, koeff_v + 1);
+    _mm_storeu_si128((__m128i*)row, m1);
+    
+    for(int i =0; i < 4; ++i )
+        printf("%d ", row[i]);
+*/
+    test(); 
 	//fileProcess(176,144,"out.yuv");
 	return 0;
 }
