@@ -107,7 +107,7 @@ static inline void clip_32i(__m128i * data ,const int32_t max_val){
     mask = _mm_cmpgt_epi32(*data, check_val); // if(reg[i] <= 0)
     *data = _mm_and_si128(*data,mask); //  reg[i] = 0
 }
-static void convert_YUYV_to_RGB32_sse2(uint8_t* src ,uint8_t*  dst , int width , int height , const int16_t* koeffs_table)
+static void convert_YUYV_to_RGB32_sse2(uint8_t* src ,uint8_t*  dst , const int width , const int height , const int16_t* koeffs_table)
 {
     __m128i y;
     __m128i u;
@@ -157,7 +157,7 @@ static void convert_YUYV_to_RGB32_sse2(uint8_t* src ,uint8_t*  dst , int width ,
     }
        
 }
-static void convert_YUYV_to_RGB32_c(const uint8_t *src, uint8_t *dst,  int width, int height)
+static void convert_YUYV_to_RGB32_c(const uint8_t* src, uint8_t* dst,  int width, int height)
 {
 	int Y, V, U;
 	int R, G, B;
