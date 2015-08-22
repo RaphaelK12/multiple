@@ -5,6 +5,15 @@
 #include <string.h>
 #include <time.h>
 #include <emmintrin.h>
+
+#ifdef LINUX_BUILD
+    #define TARGET_INLINE inline __attribute__((always_inline))
+    #define FASTCALL  __attribute__( (regparm(3)) )
+#elif defined WINDOWS_BUILD
+    #define TARGET_INLINE __forceinline
+    #define FASTCALL __vectorcall
+#endif
+
 #define RKY  4778 // Koeff of  Y for red  processing
 #define RKU  2		//  Koeff of  U for red processing
 #define RKV  6931	//  Koeff of 	V for red processing
@@ -20,10 +29,10 @@
 //G = (GKY * (Y-16) + GKU * (U-128) + GKV * (V-128)) >> 10;
 //R = (RKY * (Y-16) + RKU * (U-128) + RKV * (V-128)) >> 10;
 
+static void convert_YUYV_to_RGB32_c(const uint8_t* src, uint8_t* dst,  int width, int height);
+
 int16_t transf_koeff[] = {RKY, RKU, RKV,  GKY, GKU, GKV,  BKY, BKU, BKV};
 int16_t* koeff_v;
-
-static void convert_YUYV_to_RGB32_c(const uint8_t *src, uint8_t *dst, int width, int height);
 
 int16_t* set_koeffs(const int16_t * k){
     int16_t* mat = malloc( 3 * 2 * 8 * sizeof(int16_t));
@@ -54,7 +63,8 @@ int16_t* set_koeffs(const int16_t * k){
     }
     return mat;
 }
-static inline void load_and_unpack_YUYV(const uint8_t * mem, __m128i* y, __m128i* u ,__m128i* v){
+static TARGET_INLINE void load_and_unpack_YUYV(const uint8_t * mem, __m128i* y, __m128i* u ,__m128i* v) 
+{
     __m128i vec=_mm_loadl_epi64((__m128i*)(mem));
     // vec = 0 0 0 0 0 0 0 0 v y u y v y u y
     *v = _mm_set1_epi16(255); // store of mask
@@ -83,7 +93,8 @@ static inline void load_and_unpack_YUYV(const uint8_t * mem, __m128i* y, __m128i
     *u = _mm_unpacklo_epi16(*u,vec); //  [U] = 0 0 0 U 0 0 0 U 0 0 0 U 0 0 0 U
     *v = _mm_unpacklo_epi16(*v,vec); //  [V] = 0 0 0 V 0 0 0 V 0 0 0 V 0 0 0 V
 }
-static inline __m128i multiple_add(const __m128i* chan_a , const __m128i* chan_b, const __m128i* chan_c, const int16_t* koeffs_ab, const int16_t* koeffs_c){
+static TARGET_INLINE __m128i multiple_add(const __m128i* chan_a , const __m128i* chan_b, const __m128i* chan_c, const int16_t* koeffs_ab, const int16_t* koeffs_c) 
+{
     __m128i mul_res = _mm_loadu_si128((__m128i*) koeffs_ab);
     __m128i data = _mm_slli_epi32(*chan_a, 16);
     data = _mm_or_si128(data, *chan_b); // data = 0 a, 0 b, 0 a, 0 b, 0 a, 0 b, 0 a, 0 b
@@ -96,7 +107,8 @@ static inline __m128i multiple_add(const __m128i* chan_a , const __m128i* chan_b
     mul_res = _mm_srai_epi32(mul_res,10); // shifting
     return mul_res;
 }
-static inline void clip_32i(__m128i * data ,const int32_t max_val){
+static TARGET_INLINE void clip_32i(__m128i * data ,const int32_t max_val) 
+{
     __m128i check_val = _mm_set1_epi32(max_val);
     __m128i mask = _mm_cmplt_epi32(*data, check_val); // if (reg[i] >= value)
     *data = _mm_and_si128(*data, mask); 
@@ -107,7 +119,7 @@ static inline void clip_32i(__m128i * data ,const int32_t max_val){
     mask = _mm_cmpgt_epi32(*data, check_val); // if(reg[i] <= 0)
     *data = _mm_and_si128(*data,mask); //  reg[i] = 0
 }
-static void convert_YUYV_to_RGB32_sse2(uint8_t* src ,uint8_t*  dst , const int width , const int height , const int16_t* koeffs_table)
+static FASTCALL void convert_YUYV_to_RGB32_sse2(uint8_t* src ,uint8_t*  dst , const int width , const int height , const int16_t* koeffs_table)
 {
     __m128i y;
     __m128i u;
@@ -160,6 +172,8 @@ static void convert_YUYV_to_RGB32_sse2(uint8_t* src ,uint8_t*  dst , const int w
 static void convert_YUYV_to_RGB32_c(const uint8_t* src, uint8_t* dst,  int width, int height)
 {
 	int Y, V, U;
+    U = 0;
+    V = 0;
 	int R, G, B;
     for(int i = 0; i < height; i++)
 	{
@@ -322,13 +336,16 @@ int main()
 {
     srand(time(NULL));
     koeff_v = set_koeffs(transf_koeff);
-    /*__m128i m1 = _mm_set_epi32(10, 20 , 30 , 40);
-    m1 = multiple_add(&m1, &m1, &m1, koeff_v, koeff_v + 1);
+    /*
+    //small test of asm code
+    int32_t row[4];
+    __m128i m1 = _mm_set_epi32(10, 20 , 30 , 40);
+    clip_32i(&m1, 20);
     _mm_storeu_si128((__m128i*)row, m1);
     
     for(int i =0; i < 4; ++i )
         printf("%d ", row[i]);
-*/
+    */
     test(); 
 	//fileProcess(176,144,"out.yuv");
 	return 0;
