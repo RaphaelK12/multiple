@@ -11,10 +11,10 @@
 #include <malloc.h>
 #include "target_defs.h"
 typedef struct{
-int width;
-int height;
-int bits;
-uint8_t * data;
+    int width;
+    int height;
+    int bits;
+    uint8_t * data;
 } Frame;
 bool get_mem(Frame * f);
 void clear_mem(Frame * f);
