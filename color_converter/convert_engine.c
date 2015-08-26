@@ -1,7 +1,7 @@
 #include "convert_engine.h"
 
 
-YUV_Chanels static TARGET_INLINE load_and_unpack_YUYV( const uint8_t * mem) {
+static TARGET_INLINE YUV_Chanels load_and_unpack_YUYV( const uint8_t * mem) {
     __m128i vec = _mm_loadl_epi64( ( __m128i* )( mem ) );
     YUV_Chanels data;
     // vec = 0 0 0 0 0 0 0 0 v y u y v y u y
@@ -32,7 +32,7 @@ YUV_Chanels static TARGET_INLINE load_and_unpack_YUYV( const uint8_t * mem) {
     data.v = _mm_unpacklo_epi16( data.v, vec ); //  [V] = 0 0 0 V 0 0 0 V 0 0 0 V 0 0 0 V
     return data;
 }
-__m128i static TARGET_INLINE multiple_add( const __m128i chan_a , const __m128i chan_b, const __m128i chan_c, const int16_t* koeffs_ab, const int16_t* koeffs_c ) {
+static TARGET_INLINE __m128i multiple_add( const __m128i chan_a , const __m128i chan_b, const __m128i chan_c, const int16_t* koeffs_ab, const int16_t* koeffs_c ) {
     __m128i mul_res = _mm_load_si128( ( __m128i* ) koeffs_ab );
     __m128i data = _mm_slli_epi32( chan_a, 16 );
     data = _mm_or_si128( data, chan_b ); // data = 0 a, 0 b, 0 a, 0 b, 0 a, 0 b, 0 a, 0 b
@@ -45,7 +45,7 @@ __m128i static TARGET_INLINE multiple_add( const __m128i chan_a , const __m128i 
     mul_res = _mm_srai_epi32( mul_res, 10 ); // shifting
     return mul_res;
 }
-__m128i static TARGET_INLINE clip_32i( __m128i data , const int32_t max_val ) {
+static TARGET_INLINE __m128i  clip_32i( __m128i data , const int32_t max_val ) {
     __m128i check_val = _mm_set1_epi32( max_val );
     __m128i mask = _mm_cmplt_epi32( data, check_val ); // if (reg[i] >= value)
     __m128i res = _mm_and_si128( data, mask );
@@ -57,7 +57,7 @@ __m128i static TARGET_INLINE clip_32i( __m128i data , const int32_t max_val ) {
     res = _mm_and_si128( res, mask ); //  reg[i] = 0
     return res;
 }
-void static TARGET_INLINE pack_and_write_RGB(uint8_t* mem, RGB_Chanels rgb_data){
+static TARGET_INLINE __m128i pack_and_write_RGB(uint8_t* mem, RGB_Chanels rgb_data){
     //ALFA
     __m128i vec = _mm_set1_epi32( 3 );
     //RED
@@ -71,7 +71,7 @@ void static TARGET_INLINE pack_and_write_RGB(uint8_t* mem, RGB_Chanels rgb_data)
     vec = _mm_or_si128( vec, rgb_data.b );
     _mm_store_si128( ( __m128i* )( mem ), vec );
 }
-void convert_YUYV_to_RGB32_sse2( uint8_t* src , uint8_t*  dst , const int width , const int height , const int16_t* koeffs_table ) {
+TARGET_INLINE void convert_YUYV_to_RGB32_sse2( uint8_t* src , uint8_t*  dst , const int width , const int height , const int16_t* koeffs_table ) {
 
 
     int j;
@@ -101,7 +101,7 @@ void convert_YUYV_to_RGB32_sse2( uint8_t* src , uint8_t*  dst , const int width 
     }
 
 }
-void convert_YUYV_to_RGB32_c( const uint8_t* src, uint8_t* dst,  int width, int height ) {
+void  convert_YUYV_to_RGB32_c( const uint8_t* src, uint8_t* dst,  int width, int height ) {
     int Y, V, U;
     U = 0;
     V = 0;

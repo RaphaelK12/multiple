@@ -54,9 +54,9 @@ bool check( const uint8_t* a, const uint8_t* b, const int width, const int heigh
         }
     return true;
 }
-bool fill_frame( const int wid, const intŝ hei, uint8_t* res ) {
+bool fill_frame( const int wid, const int hei, uint8_t* res ) {
     //srand(time(NULL));
-    if(sizeof(res) < wid * hei) return false;
+    //if(sizeof(res) < wid * hei) return false;
     for( int y = 0; y < hei; ++y )
         for( int x = 0; x < wid; ++x ) {
             res[ y * wid + x] = rand() % 256;

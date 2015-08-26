@@ -34,6 +34,7 @@ void test() {
     bool isOk = true;
     isOk &= get_mem(&src_frame);
     isOk &= get_mem(&dst1_frame);
+    //dst1_frame.data = (uint8_t* )malloc(wid * hei * 4);
     isOk &= get_mem(&dst2_frame);
 
     if(!isOk) return;
