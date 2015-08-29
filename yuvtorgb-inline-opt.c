@@ -1,18 +1,4 @@
-#include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <emmintrin.h>
-#include <malloc.h>
-
-#ifdef LINUX_BUILD
-#define TARGET_INLINE inline __attribute__((always_inline))
-#elif defined WINDOWS_BUILD
-#define TARGET_INLINE __forceinline
-#endif
-
+#include "convert_engine.h"
 #define RKY  4778 // Koeff of  Y for red  processing
 #define RKU  2      //  Koeff of  U for red processing
 #define RKV  6931   //  Koeff of    V for red processing
@@ -28,13 +14,12 @@
 //G = (GKY * (Y-16) + GKU * (U-128) + GKV * (V-128)) >> 10;
 //R = (RKY * (Y-16) + RKU * (U-128) + RKV * (V-128)) >> 10;
 
-static void convert_YUYV_to_RGB32_c( const uint8_t* src, uint8_t* dst,  int width, int height );
 
-int16_t transf_koeff[] = {RKY, RKU, RKV,  GKY, GKU, GKV,  BKY, BKU, BKV};
-int16_t* koeff_v;
+static const int16_t transf_koeff[] = {RKY, RKU, RKV,  GKY, GKU, GKV,  BKY, BKU, BKV};
+static int16_t* koeff_v;
 
 int16_t* set_koeffs( const int16_t * k ) {
-    int16_t* mat = memalign( 16,  3 * 2 * 8 * sizeof( int16_t ) );
+    int16_t* mat = TARGET_MEMALIGN( 16,  3 * 2 * 8 * sizeof( int16_t ) );
 
     // INVERSE ORDER!!!
     // a and b
@@ -116,7 +101,7 @@ void static TARGET_INLINE clip_32i( __m128i* data , const int32_t max_val ) {
     mask = _mm_cmpgt_epi32( *data, check_val ); // if(reg[i] <= 0)
     *data = _mm_and_si128( *data, mask ); //  reg[i] = 0
 }
-void static  convert_YUYV_to_RGB32_sse2( uint8_t* src , uint8_t*  dst , const int width , const int height , const int16_t* koeffs_table ) {
+void convert_YUYV_to_RGB32_sse2( uint8_t* src , uint8_t*  dst , const int width , const int height , const int16_t* koeffs_table ) {
     __m128i y;
     __m128i u;
     __m128i v;
@@ -164,7 +149,7 @@ void static  convert_YUYV_to_RGB32_sse2( uint8_t* src , uint8_t*  dst , const in
     }
 
 }
-void static convert_YUYV_to_RGB32_c( const uint8_t* src, uint8_t* dst,  int width, int height ) {
+void convert_YUYV_to_RGB32_c( const uint8_t* src, uint8_t* dst,  int width, int height ) {
     int Y, V, U;
     U = 0;
     V = 0;
